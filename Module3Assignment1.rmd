@@ -1,0 +1,92 @@
+---
+output:
+  word_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+```
+
+Read-in dataset
+```{r}
+bike <- read_csv("bike_cleaned.csv")
+```
+
+Converting variables
+```{r}
+bike = bike%>% mutate(dteday =mdy(dteday))
+
+bike = bike %>% mutate(season = as_factor(season))
+bike = bike %>% mutate(mnth = as_factor(mnth))
+bike = bike %>% mutate(holiday = as_factor(holiday))
+bike = bike %>% mutate(weekday = as_factor(weekday))
+bike = bike %>% mutate(workingday = as_factor(workingday))
+bike = bike %>% mutate(weathersit = as_factor(weathersit))
+bike = bike %>% mutate(hr = as_factor(hr))
+```
+
+Split
+```{r}
+set.seed(1234)
+bike_split = initial_split(bike, prop = 0.70, strata = count)
+train = training(bike_split)
+test = testing(bike_split)
+```
+The training set has 13,032 observations and the testing set has 4,347 observations.
+
+
+Multiple Regression
+```{r}
+bike_recipe = recipe(count ~ season + mnth + hr + holiday + weekday + temp + weathersit, train)
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(bike_recipe)
+
+lm_fit = fit(lm_wflow, train)
+summary(lm_fit$fit$fit$fit)
+```
+
+The model gives an Adjusted R-squared value of .62. The model would probably result in a stronger R-square value if certain variables were removed. There are many variables that are not significant and therefore are not doing anything to improve the model and could even be hurting it (i.e most weekdays and most months besides june-august).
+
+```{r}
+predict_train <- lm_fit %>% predict(train) %>% bind_cols(train) %>% metrics(truth = count, estimate = .pred)
+```
+
+```{r}
+predictions <- lm_fit %>% predict(train)
+```
+
+```{r}
+ggplot(predictions, aes(x=.pred)) +
+  geom_histogram()
+```
+
+The counts appear to increase as predictions increase, then dip around 200 predictions and rise again around 300 before finally decreasing for any predictions more than 300. 
+
+```{r}
+bike_recipe2 = recipe(count ~ season + mnth + hr + holiday + weekday + temp + weathersit, test)
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(bike_recipe2)
+
+lm_fit2 = fit(lm_wflow, test)
+summary(lm_fit2$fit$fit$fit)
+```
+
+The adjusted R-square value doesn't change much between the testing and training set (in fact, it increases just slightly on the testing set). This is an indication that this is a good model as it doesn't appear to be over/underfitting either of the data sets. 

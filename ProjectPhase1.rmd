@@ -1,0 +1,251 @@
+```{r, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(ggcorrplot)
+library(mice)
+library(caret)
+library(gridExtra)
+library(vip)
+library(ranger)
+library(glmnet)
+library(rpart) #for classification trees
+library(rpart.plot) #for plotting trees
+library(RColorBrewer) #better visualization of classification trees
+library(rattle) #better visualization of classification trees
+```
+
+
+
+##Reading in the Data##
+```{r}
+student <- read_csv("ames_student.csv")
+#summary(student)
+#str(student)
+#glimpse(student)
+```
+
+```{r}
+competition <- read_csv("ames_competition.csv")
+```
+
+##Consolidating Variables##
+```{r}
+student2 <- student %>% dplyr::select("Above_Median", "Lot_Area", "Neighborhood", "House_Style", "Overall_Cond", "Year_Built", "Roof_Style", "Exter_Cond", "Central_Air", "Full_Bath", "Pool_QC", "Kitchen_Qual")
+```
+
+##Recoding variables to factors##
+```{r}
+student2 <- student2 %>% 
+  mutate(Above_Median = as_factor(Above_Median)) %>%
+  mutate(Above_Median = fct_recode(Above_Median, "No" = "0", "Yes" = "1" )) %>% 
+
+  mutate(Neighborhood = as_factor(Neighborhood)) %>%
+  
+  mutate(House_Style = as_factor(House_Style)) %>%
+  
+  mutate(Overall_Cond = as_factor(Overall_Cond)) %>% 
+  mutate(Overall_Cond = fct_recode(Overall_Cond, "Very Poor" = "1", "Poor" = "2","Fair" = "3", "Below_Average" = "4","Average" = "5", "Above_Average" = "6", "Good" = "7", "Very_Good" = "8", "Excellent" = "9", "Very_Excellent" = "10")) %>%
+  
+  mutate(Roof_Style = as_factor(Roof_Style)) %>%
+  
+  mutate(Exter_Cond = as_factor(Exter_Cond)) %>% 
+  mutate(Exter_Cond = fct_recode(Exter_Cond, "Poor" = "0", "Fair" = "1", "Typical" = "2",  "Good" = "3", "Excellent" = "4")) %>%
+  
+  mutate(Central_Air = as_factor(Central_Air)) %>%
+  mutate(Central_Air = fct_recode(Central_Air, "N" = "0", "Y" = "1" )) %>%
+  
+  mutate(Full_Bath = as_factor(Full_Bath)) %>%
+  
+  mutate(Pool_QC = as_factor(Pool_QC)) %>%
+  mutate(Pool_QC = fct_recode(Pool_QC, "No_Pool" = "0", "Fair" = "1", "Typical" = "2", "Good" = "3", "Excellent" = "4")) %>%
+  
+  mutate(Kitchen_Qual = as_factor(Kitchen_Qual)) %>% 
+  mutate(Kitchen_Qual = fct_recode(Kitchen_Qual, "Poor" = "0", "Fair" = "1", "Typical" = "2",  "Good" = "3", "Excellent" = "4"))
+```
+
+##Examining individual neighborhoods##
+```{r}
+table(student2$Neighborhood)
+```
+
+##Splitting the data##
+```{r}
+set.seed(123) 
+student_split = initial_split(student2, prop = 0.7, strata = Above_Median) #70% in training
+train = training(student_split)
+test = testing(student_split)
+```
+
+##Plotting neighborhoods first##
+```{r}
+p1 = ggplot(train, aes(x = Neighborhood, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+grid.arrange(p1)
+```
+
+
+##Plotting more bar charts##
+```{r}
+p1 = ggplot(train, aes(x = Pool_QC, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+p2 = ggplot(train, aes(x = House_Style, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+p3 = ggplot(train, aes(x = Overall_Cond, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+p4 = ggplot(train, aes(x = Exter_Cond, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+grid.arrange(p1,p2,p3,p4)
+```
+
+##Plotting nominal variables via box-plots##
+```{r}
+p1 = ggplot(train, aes(x = Full_Bath, fill = Above_Median)) + geom_bar(position = "fill")
+p2 = ggplot(train, aes(x = Central_Air, fill = Above_Median)) + geom_bar(position = "fill")
+p3 = ggplot(train, aes(x = Lot_Area, fill = Above_Median)) + geom_boxplot()
+p4 = ggplot(train, aes(x = Year_Built, fill = Above_Median)) + geom_boxplot()
+grid.arrange(p1,p2,p3,p4)
+```
+
+
+##Further examining variables that stuck out in our visuals##
+```{r}
+t1 = table(train$Above_Median,  train$Overall_Cond)
+prop.table(t1, margin = 2)
+```
+
+```{r}
+t1 = table(train$Above_Median,  train$Central_Air)
+prop.table(t1, margin = 2)
+```
+
+```{r}
+t1 = table(train$Above_Median,  train$Full_Bath)
+prop.table(t1, margin = 2)
+```
+
+```{r}
+t1 = table(train$Above_Median,  train$Pool_QC)
+prop.table(t1, margin = 2)
+```
+
+```{r}
+folds = vfold_cv(train, v = 10)
+```
+
+
+```{r}
+student_model = 
+  logistic_reg() %>% #note the use of logistic_reg 
+  set_engine("glm") #standard logistic regression engine is glm
+
+student_recipe = recipe(Above_Median ~., train) %>%
+  step_other(Neighborhood, threshold = 0.01) %>% #collapses small Neighborhoods into an "Other" group
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(student_recipe) %>% 
+  add_model(student_model)
+
+student_fit = fit(logreg_wf, train)
+```
+
+
+```{r}
+options(scipen = 999)
+summary(student_fit$fit$fit$fit)
+options(scipen = 0)
+```
+
+
+```{r}
+student_model2 = 
+  logistic_reg() %>% #note the use of logistic_reg 
+  set_engine("glm") #standard logistic regression engine is glm
+
+student_recipe2 = recipe(Above_Median ~   Lot_Area + Year_Built + House_Style + Overall_Cond + Kitchen_Qual, train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(student_recipe2) %>% 
+  add_model(student_model2)
+
+student_fit2 = fit(logreg_wf, train)
+```
+
+
+```{r}
+options(scipen = 999)
+summary(student_fit2$fit$fit$fit)
+options(scipen = 0)
+```
+
+
+
+```{r}
+student_tree_recipe = recipe(Above_Median ~ Overall_Cond, train)
+
+tree_model = decision_tree() %>% 
+  set_engine("rpart", model = TRUE) %>% #don't forget the model = TRUE flag
+  set_mode("classification")
+
+student_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(student_tree_recipe)
+
+student_fit = fit(student_wflow, train)
+```
+
+```{r}
+#extract the tree's fit from the fit object
+tree = student_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+#plot the tree
+rpart.plot(tree)
+```
+
+```{r}
+fancyRpartPlot(tree) 
+```
+
+```{r}
+student_tree_recipe = recipe(Above_Median  ~., train)
+
+tree_model = decision_tree() %>% 
+  set_engine("rpart", model = TRUE) %>% #don't forget the model = TRUE flag
+  set_mode("classification")
+
+student_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(student_tree_recipe)
+
+student_fit = fit(student_wflow, train)
+```
+
+```{r}
+#extract the tree's fit from the fit object
+tree = student_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+#plot the tree
+fancyRpartPlot(tree)
+```
+
+```{r}
+student_fit$fit$fit$fit$cptable
+```
+
+```{r}
+treepred = predict(student_fit, test, type = "class")
+head(treepred)
+```
+
+```{r}
+confusionMatrix(treepred$.pred_class,test$Above_Median,positive="Yes") #predictions first then actual
+```
+
+```{r}
+
+```
+
+
